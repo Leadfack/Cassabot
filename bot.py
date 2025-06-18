@@ -7,8 +7,18 @@ from dotenv import load_dotenv
 from pyairtable import Table
 from typing import Dict, List, Optional
 
-# Load environment variables
+# Загрузка переменных окружения
 load_dotenv()
+
+# Airtable config (production values)
+AIRTABLE_API_KEY = os.environ["AIRTABLE_API_KEY"]
+BASE_ID = os.environ["BASE_ID"]
+OPERATORS_TABLE_ID = os.environ["OPERATORS_TABLE_ID"]
+CASH_TABLE_ID = os.environ["CASH_TABLE_ID"]
+SCHEDULE_TABLE_ID = os.environ["SCHEDULE_TABLE_ID"]
+
+# Telegram Bot Token
+TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 
 # Configure logging
 logging.basicConfig(
@@ -16,16 +26,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# Airtable config (production values)
-AIRTABLE_API_KEY = "pat5KkVPYueyxhPEN.7c60565d33998156f69038ea326afec150136c8881dc8069078b1acf2da75df4"
-BASE_ID = "appPLEgqFVgDw0mmi"
-OPERATORS_TABLE_ID = "tblcBDxoOAw5Vt53O"
-CASH_TABLE_ID = "tbl8ksQCyeBHMmvs2"
-SCHEDULE_TABLE_ID = "tbl15a72aYTY2F1AV"
-
-# Telegram Bot Token
-TELEGRAM_BOT_TOKEN = "7751050064:AAGzlGGrOZzYpEWXg-gIUcA5hbxnGAXV7Co"
 
 # Conversation states
 CHOOSING_ACTION, CHOOSING_PAGE, CHOOSING_TYPE, ENTERING_AMOUNT, CHOOSING_SHIFT, ENTERING_DATE = range(6)
@@ -237,13 +237,10 @@ async def handle_schedule_shift(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data.clear()
     return CHOOSING_ACTION
 
+# --- MAIN ---
 def main() -> None:
-    """Start the bot."""
-    # Create the Application
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-    # Create conversation handler for cash recording
-    cash_handler = ConversationHandler(
+    conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
             CHOOSING_ACTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_action)],
@@ -257,12 +254,8 @@ def main() -> None:
         },
         fallbacks=[CommandHandler('start', start)]
     )
-
-    # Add handlers
-    application.add_handler(cash_handler)
+    application.add_handler(conv_handler)
     application.add_handler(CommandHandler('help', help_command))
-
-    # Start the Bot
     application.run_polling()
 
 if __name__ == '__main__':
