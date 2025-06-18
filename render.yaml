@@ -2,7 +2,6 @@ services:
   - type: web
     name: agencyos-bot
     env: python
-    pythonVersion: 3.13.4
     plan: free
     buildCommand: "poetry install --no-root"
     startCommand: "python bot.py"
