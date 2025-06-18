@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: agencyos-bot
+    env: python
+    pythonVersion: 3.13.4
+    plan: free
+    buildCommand: "poetry install --no-root"
+    startCommand: "python bot.py"
+    envVars:
+      - key: AIRTABLE_API_KEY
+        sync: false
+      - key: BASE_ID
+        sync: false
+      - key: OPERATORS_TABLE_ID
+        sync: false
+      - key: CASH_TABLE_ID
+        sync: false
+      - key: SCHEDULE_TABLE_ID
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false 
