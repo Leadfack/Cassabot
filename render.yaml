@@ -1,5 +1,5 @@
 services:
-  - type: web
+  - type: worker
     name: of-agencyos-bot
     env: docker
     buildCommand: docker build -t of-agencyos-bot .
