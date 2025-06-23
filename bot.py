@@ -3,7 +3,7 @@ import asyncio
 import logging
 from datetime import datetime
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, CallbackQueryHandler
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackContext
 from pyairtable import Api, Base, Table
 
@@ -548,44 +548,19 @@ async def handle_navigation(update: Update, context: CallbackContext):
     
     return MENU
 
-async def main():
-    """Основная функция бота"""
-    # Загружаем токен из переменных окружения
-    load_dotenv()
-    token = os.getenv('TELEGRAM_TOKEN')
-    if not token:
-        logger.error("Не найден токен бота!")
-        return
-
-    # Инициализируем бота
-    updater = Updater(token)
+def main():
+    updater = Updater(os.getenv('TELEGRAM_TOKEN'))
+    dispatcher = updater.dispatcher
 
     # Добавляем обработчики
-    updater.dispatcher.add_handler(CommandHandler("start", start))
-    updater.dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_menu))
-    
-    # Добавляем обработчики состояний
-    conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(Filters.text & ~Filters.command, handle_menu)],
-        states={
-            CASH_FLOW_SELECT_PAGE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_page)],
-            CASH_FLOW_SELECT_SHIFT: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_shift)],
-            CASH_FLOW_SELECT_TYPE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_type)],
-            CASH_FLOW_ENTER_AMOUNT: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_amount)],
-            CASH_FLOW_ENTER_DATE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_date)],
-            SCHEDULE_SELECT_DATE: [MessageHandler(Filters.text & ~Filters.command, handle_schedule_date)],
-            SCHEDULE_SELECT_SHIFT: [MessageHandler(Filters.text & ~Filters.command, handle_schedule_shift)],
-        },
-        fallbacks=[],
-    )
-    updater.dispatcher.add_handler(conv_handler)
+    dispatcher.add_handler(CommandHandler('start', start))
+    dispatcher.add_handler(CommandHandler('help', help_command))
+    dispatcher.add_handler(CallbackQueryHandler(button))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
     # Запускаем бота
-    await updater.start()
-    await updater.idle()
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass 
+    main() 
