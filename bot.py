@@ -1,261 +1,580 @@
-import logging
-from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters, ConversationHandler
 import os
+import logging
+from datetime import datetime
 from dotenv import load_dotenv
-from pyairtable import Table
-from typing import Dict, List, Optional
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from pyairtable import Api, Base, Table
 
-# Загрузка переменных окружения
-load_dotenv()
-
-# Airtable config (production values)
-AIRTABLE_API_KEY = os.environ["AIRTABLE_API_KEY"]
-BASE_ID = os.environ["BASE_ID"]
-OPERATORS_TABLE_ID = os.environ["OPERATORS_TABLE_ID"]
-CASH_TABLE_ID = os.environ["CASH_TABLE_ID"]
-SCHEDULE_TABLE_ID = os.environ["SCHEDULE_TABLE_ID"]
-
-# Telegram Bot Token
-TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-
-# Configure logging
+# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Conversation states
-CHOOSING_ACTION, CHOOSING_PAGE, CHOOSING_TYPE, ENTERING_AMOUNT, CHOOSING_SHIFT, ENTERING_DATE = range(6)
-SCHEDULE_CHOOSING_DATE, SCHEDULE_CHOOSING_SHIFT = range(2)
+# Загрузка переменных окружения
+load_dotenv()
 
-OPERATION_TYPES = ['Касса', 'Долет', 'Возврат']
+# Константы для состояний разговора
+(MENU, CASH_FLOW_SELECT_PAGE, CASH_FLOW_SELECT_SHIFT, CASH_FLOW_SELECT_TYPE, 
+ CASH_FLOW_ENTER_AMOUNT, CASH_FLOW_ENTER_DATE, SCHEDULE_SELECT_DATE, 
+ SCHEDULE_SELECT_SHIFT) = range(8)
 
-# --- Airtable helpers ---
-def get_operator_record(tg_id: str):
-    table = Table(AIRTABLE_API_KEY, BASE_ID, OPERATORS_TABLE_ID)
-    records = table.all(formula=f"{{TG ID}} = '{tg_id}'")
-    return records[0] if records else None
+# Константы для Airtable
+AIRTABLE_API_KEY = os.getenv('AIRTABLE_API_KEY')
+BASE_ID = "appPLEgqFVgDw0mmi"  # ID вашей базы Managers
+OPERATORS_TABLE = "Операторы"
+CASH_TABLE = "Касса"
+SCHEDULE_TABLE = "График"
 
-def get_operator_pages_and_manager(tg_id: str):
-    rec = get_operator_record(tg_id)
-    if rec:
-        pages = rec['fields'].get('Страница', [])
-        manager = rec['fields'].get('managerName', '')
-        name = rec['fields'].get('Name', '')
-        return pages, manager, name
-    return [], '', ''
+# Константы для смен
+SHIFTS = ["00-08", "08-16", "16-00", "00-06", "06-12", "18-00"]
 
-def get_schedule_row(operator_name: str, page: str):
-    table = Table(AIRTABLE_API_KEY, BASE_ID, SCHEDULE_TABLE_ID)
-    formula = f"AND({{Имя}} = '{operator_name}', {{Страница}} = '{page}')"
-    records = table.all(formula=formula)
-    return records[0] if records else None
+# Инициализация Airtable
+airtable = Api(AIRTABLE_API_KEY)
+base = Base(airtable, BASE_ID)
+operators_table = base.table(OPERATORS_TABLE)
+cash_table = base.table(CASH_TABLE)
+schedule_table = base.table(SCHEDULE_TABLE)
 
-def update_schedule_day(record_id: str, day: int, shift: str):
-    table = Table(AIRTABLE_API_KEY, BASE_ID, SCHEDULE_TABLE_ID)
-    field_name = str(day)
-    table.update(record_id, {field_name: shift})
-
-def add_cash_record(operator_name, manager, page, amount, shift, date, type_):
-    table = Table(AIRTABLE_API_KEY, BASE_ID, CASH_TABLE_ID)
-    table.create({
-        "Name": operator_name,
-        "Менеджер": manager,
-        "Страница": page,
-        "Касса": amount,
-        "Смена": shift,
-        "Date": date,
-        "Тип": type_
-    })
-
-# --- Bot logic ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.effective_user
-    pages, manager, name = get_operator_pages_and_manager(str(user.id))
-    if not pages:
-        await update.message.reply_text('У вас нет доступа к боту. Обратитесь к администратору.')
-        return ConversationHandler.END
-    context.user_data['pages'] = pages
-    context.user_data['manager'] = manager
-    context.user_data['operator_name'] = name
+def create_main_keyboard():
+    """Создает основную клавиатуру"""
     keyboard = [
-        [KeyboardButton("📝 Записать кассу"), KeyboardButton("📅 График смен")],
-        [KeyboardButton("❓ Помощь")]
+        [KeyboardButton("💰 Записать кассу")],
+        [KeyboardButton("📅 График")]
     ]
-    await update.message.reply_text(
-        f'Привет, {name}! Выберите действие:',
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    )
-    return CHOOSING_ACTION
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        '1. "Записать кассу" — только по своим страницам\n'
-        '2. "График смен" — только по своим страницам\n'
-        '3. Все данные пишутся в Airtable автоматически\n'
-        'Если возникли вопросы — обратитесь к менеджеру.'
-    )
+def create_navigation_keyboard(include_back=True, include_main_menu=True):
+    """Создает клавиатуру с кнопками навигации"""
+    keyboard = []
+    if include_back:
+        keyboard.append([KeyboardButton("⬅️ Назад")])
+    if include_main_menu:
+        keyboard.append([KeyboardButton("🏠 В главное меню")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text
-    if text == "📝 Записать кассу":
-        keyboard = [[InlineKeyboardButton(page, callback_data=f'page_{page}')] for page in context.user_data['pages']]
-        keyboard.append([InlineKeyboardButton("Отмена", callback_data='cancel')])
-        await update.message.reply_text('Выберите страницу:', reply_markup=InlineKeyboardMarkup(keyboard))
-        return CHOOSING_PAGE
-    elif text == "📅 График смен":
-        keyboard = [[InlineKeyboardButton(page, callback_data=f'schedule_page_{page}')] for page in context.user_data['pages']]
-        keyboard.append([InlineKeyboardButton("Отмена", callback_data='cancel')])
-        await update.message.reply_text('Выберите страницу для графика:', reply_markup=InlineKeyboardMarkup(keyboard))
-        return SCHEDULE_CHOOSING_DATE
-    elif text == "❓ Помощь":
-        await help_command(update, context)
-        return CHOOSING_ACTION
-    return CHOOSING_ACTION
-
-async def handle_page_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    if query.data == 'cancel':
-        await query.edit_message_text('Операция отменена.')
-        return CHOOSING_ACTION
-    page = query.data.replace('page_', '')
-    context.user_data['selected_page'] = page
-    keyboard = [[InlineKeyboardButton(t, callback_data=f'type_{t}')] for t in OPERATION_TYPES]
-    keyboard.append([InlineKeyboardButton("Отмена", callback_data='cancel')])
-    await query.edit_message_text(f'Страница: {page}\nВыберите тип:', reply_markup=InlineKeyboardMarkup(keyboard))
-    return CHOOSING_TYPE
-
-async def handle_type_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    if query.data == 'cancel':
-        await query.edit_message_text('Операция отменена.')
-        return CHOOSING_ACTION
-    type_ = query.data.replace('type_', '')
-    context.user_data['selected_type'] = type_
-    await query.edit_message_text(f'Тип: {type_}\nВведите сумму:')
-    return ENTERING_AMOUNT
-
-async def handle_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start"""
+    # Получаем информацию о пользователе
+    user_id = str(update.effective_user.id)
+    
     try:
-        amount = float(update.message.text.replace(',', '.'))
-        context.user_data['amount'] = amount
-        keyboard = [[InlineKeyboardButton(shift, callback_data=f'shift_{shift}') for shift in ["08-16", "00-08", "12-18", "16-00", "18-00", "06-12"]]]
-        keyboard.append([InlineKeyboardButton("Отмена", callback_data='cancel')])
-        await update.message.reply_text('Выберите смену:', reply_markup=InlineKeyboardMarkup(keyboard))
-        return CHOOSING_SHIFT
-    except ValueError:
-        await update.message.reply_text('Введите корректную сумму (например: 1000 или 1000.50)')
-        return ENTERING_AMOUNT
-
-async def handle_shift_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    if query.data == 'cancel':
-        await query.edit_message_text('Операция отменена.')
-        return CHOOSING_ACTION
-    shift = query.data.replace('shift_', '')
-    context.user_data['selected_shift'] = shift
-    await query.edit_message_text('Введите число месяца (например: 16):')
-    return ENTERING_DATE
-
-async def handle_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    try:
-        day = int(update.message.text)
-        if not (1 <= day <= 31):
-            raise ValueError
-        now = datetime.now()
-        date_str = f"{day}.{now.month}.{now.year}"
-        add_cash_record(
-            context.user_data['operator_name'],
-            context.user_data['manager'],
-            context.user_data['selected_page'],
-            context.user_data['amount'],
-            context.user_data['selected_shift'],
-            date_str,
-            context.user_data['selected_type']
+        # Ищем оператора по TG ID
+        operators = operators_table.all()
+        operator = None
+        
+        for op in operators:
+            if op['fields'].get('TG ID') == user_id:
+                operator = op
+                break
+        
+        if operator:
+            logger.info(f"Found operator: {operator}")
+            # Сохраняем данные оператора
+            context.user_data['operator_id'] = operator['fields'].get('ID')
+            context.user_data['operator_name'] = operator['fields'].get('Name')
+            context.user_data['manager'] = operator['fields'].get('Менеджер', [None])[0] if operator['fields'].get('Менеджер') else None
+            
+            # Получаем страницы оператора
+            pages = {}
+            if 'Страница' in operator['fields']:
+                for page_id in operator['fields']['Страница']:
+                    try:
+                        page = cash_table.get(page_id)
+                        if page and 'Name' in page['fields']:
+                            pages[page['fields']['Name']] = page_id
+                    except Exception as e:
+                        logger.error(f"Error fetching page {page_id}: {str(e)}")
+            
+            context.user_data['page_names'] = pages
+            logger.info(f"Saved operator data: {context.user_data}")
+            
+            # Создаем основную клавиатуру
+            await update.message.reply_text(
+                "Выберите действие:",
+                reply_markup=create_main_keyboard()
+            )
+            return MENU
+        else:
+            logger.warning(f"Operator not found for TG ID: {user_id}")
+            await update.message.reply_text(
+                "Извините, но я вас не узнаю. Обратитесь к менеджеру для регистрации в системе."
+            )
+            return ConversationHandler.END
+            
+    except Exception as e:
+        logger.error(f"Error in start handler: {str(e)}")
+        await update.message.reply_text(
+            "Произошла ошибка при запуске бота. Попробуйте позже или обратитесь к менеджеру."
         )
-        await update.message.reply_text('✅ Запись кассы добавлена!')
-        context.user_data.clear()
-        return CHOOSING_ACTION
-    except ValueError:
-        await update.message.reply_text('Введите корректное число (1-31)')
-        return ENTERING_DATE
+        return ConversationHandler.END
 
-# --- SCHEDULE ---
-async def handle_schedule_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    if query.data == 'cancel':
-        await query.edit_message_text('Операция отменена.')
-        return CHOOSING_ACTION
-    page = query.data.replace('schedule_page_', '')
-    context.user_data['schedule_page'] = page
-    # Календарь на 7 дней вперёд
-    today = datetime.now()
-    keyboard = [[InlineKeyboardButton(str(today.day + i), callback_data=f'schedule_day_{today.day + i}')]
-               for i in range(7)]
-    keyboard.append([InlineKeyboardButton("Отмена", callback_data='cancel')])
-    await query.edit_message_text('Выберите день:', reply_markup=InlineKeyboardMarkup(keyboard))
-    return SCHEDULE_CHOOSING_SHIFT
+async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик главного меню"""
+    text = update.message.text
+    logger.info(f"Menu selection: {text}")
 
-async def handle_schedule_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    if query.data == 'cancel':
-        await query.edit_message_text('Операция отменена.')
-        return CHOOSING_ACTION
-    day = int(query.data.replace('schedule_day_', ''))
-    context.user_data['schedule_day'] = day
-    # Список смен
-    shifts = ["08-16", "00-08", "12-18", "16-00", "18-00", "06-12", "Выходной"]
-    keyboard = [[InlineKeyboardButton(shift, callback_data=f'schedule_shift_{shift}') for shift in shifts]]
-    keyboard.append([InlineKeyboardButton("Отмена", callback_data='cancel')])
-    await query.edit_message_text('Выберите смену:', reply_markup=InlineKeyboardMarkup(keyboard))
-    return SCHEDULE_CHOOSING_DATE
+    if text == "💰 Записать кассу":
+        # Получаем страницы оператора
+        try:
+            # Получаем ID страниц из данных оператора
+            operator_id = context.user_data.get('operator_id')
+            if not operator_id:
+                logger.error("Operator ID not found in context")
+                await update.message.reply_text(
+                    "Ошибка: не найден ID оператора. Попробуйте перезапустить бота командой /start",
+                    reply_markup=create_main_keyboard()
+                )
+                return MENU
 
-async def handle_schedule_shift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    if query.data == 'cancel':
-        await query.edit_message_text('Операция отменена.')
-        return CHOOSING_ACTION
-    shift = query.data.replace('schedule_shift_', '')
-    operator_name = context.user_data['operator_name']
-    page = context.user_data['schedule_page']
-    day = context.user_data['schedule_day']
-    row = get_schedule_row(operator_name, page)
-    if row:
-        update_schedule_day(row['id'], day, shift)
-        await query.edit_message_text(f'✅ График обновлён: {page}, {day} число — {shift}')
+            # Получаем оператора из таблицы
+            operators = operators_table.all(formula=f"{{ID}}='{operator_id}'")
+            if not operators:
+                logger.error(f"Operator not found with ID: {operator_id}")
+                await update.message.reply_text(
+                    "Ошибка: не найден оператор. Обратитесь к менеджеру.",
+                    reply_markup=create_main_keyboard()
+                )
+                return MENU
+
+            operator = operators[0]
+            pages = {}
+            
+            if 'Страница' in operator['fields']:
+                for page_id in operator['fields']['Страница']:
+                    try:
+                        page = cash_table.get(page_id)
+                        if page and 'Name' in page['fields']:
+                            pages[page['fields']['Name']] = page_id
+                    except Exception as e:
+                        logger.error(f"Error fetching page {page_id}: {str(e)}")
+
+            if not pages:
+                logger.error("No pages found for operator")
+                await update.message.reply_text(
+                    "У вас нет доступных страниц. Обратитесь к менеджеру.",
+                    reply_markup=create_main_keyboard()
+                )
+                return MENU
+
+            # Сохраняем страницы в контекст
+            context.user_data['page_names'] = pages
+            logger.info(f"Available pages: {pages}")
+
+            # Создаем клавиатуру со страницами
+            keyboard = [[KeyboardButton(page_name)] for page_name in pages.keys()]
+            keyboard.extend([
+                [KeyboardButton("⬅️ Назад")],
+                [KeyboardButton("🏠 В главное меню")]
+            ])
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+            await update.message.reply_text(
+                "Выберите страницу:",
+                reply_markup=reply_markup
+            )
+            return CASH_FLOW_SELECT_PAGE
+
+        except Exception as e:
+            logger.error(f"Error in cash flow menu: {str(e)}")
+            await update.message.reply_text(
+                "Произошла ошибка. Попробуйте позже или обратитесь к менеджеру.",
+                reply_markup=create_main_keyboard()
+            )
+            return MENU
+
+    elif text == "📅 График":
+        # Создаем клавиатуру с кнопками навигации
+        keyboard = [
+            [KeyboardButton("⬅️ Назад")],
+            [KeyboardButton("🏠 В главное меню")]
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
+        await update.message.reply_text(
+            "Введите число месяца (1-31):",
+            reply_markup=reply_markup
+        )
+        return SCHEDULE_SELECT_DATE
+
     else:
-        await query.edit_message_text('❌ Не найдена строка графика для этой страницы.')
-    context.user_data.clear()
-    return CHOOSING_ACTION
+        await update.message.reply_text(
+            "Выберите действие из меню:",
+            reply_markup=create_main_keyboard()
+        )
+        return MENU
 
-# --- MAIN ---
-def main() -> None:
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+async def handle_cash_flow_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора страницы для записи кассы"""
+    text = update.message.text
+    
+    if text == "⬅️ Назад" or text == "🏠 В главное меню":
+        return await handle_navigation(update, context)
+    
+    context.user_data['selected_page'] = text
+    
+    # Создаем клавиатуру с выбором смены
+    keyboard = [[KeyboardButton(shift)] for shift in SHIFTS]
+    keyboard.extend([
+        [KeyboardButton("⬅️ Назад")],
+        [KeyboardButton("🏠 В главное меню")]
+    ])
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    await update.message.reply_text(
+        "Выберите смену:",
+        reply_markup=reply_markup
+    )
+    return CASH_FLOW_SELECT_SHIFT
+
+async def handle_cash_flow_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора смены"""
+    text = update.message.text
+    
+    if text == "⬅️ Назад" or text == "🏠 В главное меню":
+        return await handle_navigation(update, context)
+    
+    # Сохраняем выбранную смену
+    context.user_data['selected_shift'] = text
+    
+    # Создаем клавиатуру для выбора типа операции
+    keyboard = [
+        [KeyboardButton("Касса")],
+        [KeyboardButton("Долет")],
+        [KeyboardButton("Возврат")],
+        [KeyboardButton("⬅️ Назад")],
+        [KeyboardButton("🏠 В главное меню")]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    await update.message.reply_text(
+        "Выберите тип операции:",
+        reply_markup=reply_markup
+    )
+    return CASH_FLOW_SELECT_TYPE
+
+async def handle_cash_flow_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора типа операции"""
+    text = update.message.text
+    
+    if text == "⬅️ Назад" or text == "🏠 В главное меню":
+        return await handle_navigation(update, context)
+    
+    # Проверяем тип операции
+    valid_types = ["Касса", "Долет", "Возврат"]
+    
+    if text not in valid_types:
+        await update.message.reply_text(
+            "Пожалуйста, выберите тип операции из предложенных вариантов.",
+            reply_markup=ReplyKeyboardMarkup([
+                [KeyboardButton("Касса")],
+                [KeyboardButton("Долет")],
+                [KeyboardButton("Возврат")],
+                [KeyboardButton("⬅️ Назад")],
+                [KeyboardButton("🏠 В главное меню")]
+            ], resize_keyboard=True)
+        )
+        return CASH_FLOW_SELECT_TYPE
+    
+    # Сохраняем тип операции
+    context.user_data['operation_type'] = text
+    
+    # Создаем клавиатуру для ввода суммы
+    keyboard = [
+        [KeyboardButton("⬅️ Назад")],
+        [KeyboardButton("🏠 В главное меню")]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    await update.message.reply_text(
+        "Введите сумму:",
+        reply_markup=reply_markup
+    )
+    return CASH_FLOW_ENTER_AMOUNT
+
+async def handle_cash_flow_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик ввода суммы"""
+    text = update.message.text
+    
+    if text == "⬅️ Назад" or text == "🏠 В главное меню":
+        return await handle_navigation(update, context)
+    
+    try:
+        amount = float(text)
+        context.user_data['amount'] = amount
+        
+        # Создаем клавиатуру с кнопкой "Сегодня" и навигацией
+        keyboard = [
+            [KeyboardButton("📅 Сегодня")],
+            [KeyboardButton("⬅️ Назад")],
+            [KeyboardButton("🏠 В главное меню")]
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
+        await update.message.reply_text(
+            "Введите дату в формате ДД.ММ.ГГГГ или нажмите 'Сегодня':",
+            reply_markup=reply_markup
+        )
+        return CASH_FLOW_ENTER_DATE
+    except ValueError:
+        await update.message.reply_text(
+            "Пожалуйста, введите корректное число."
+        )
+        return CASH_FLOW_ENTER_AMOUNT
+
+async def handle_cash_flow_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик ввода даты"""
+    text = update.message.text
+    
+    if text == "⬅️ Назад" or text == "🏠 В главное меню":
+        return await handle_navigation(update, context)
+    
+    try:
+        # Получаем дату
+        if text == "📅 Сегодня":
+            date = datetime.now().strftime("%Y-%m-%d")
+        else:
+            try:
+                # Преобразуем дату из формата ДД.ММ.ГГГГ в ГГГГ-ММ-ДД
+                parsed_date = datetime.strptime(text, "%d.%m.%Y")
+                date = parsed_date.strftime("%Y-%m-%d")
+            except ValueError:
+                await update.message.reply_text(
+                    "Пожалуйста, введите дату в формате ДД.ММ.ГГГГ или нажмите 'Сегодня'",
+                    reply_markup=ReplyKeyboardMarkup([
+                        [KeyboardButton("📅 Сегодня")],
+                        [KeyboardButton("⬅️ Назад")],
+                        [KeyboardButton("🏠 В главное меню")]
+                    ], resize_keyboard=True)
+                )
+                return CASH_FLOW_ENTER_DATE
+        
+        # Получаем все необходимые данные из контекста
+        operator_id = context.user_data.get('operator_id')
+        operator_name = context.user_data.get('operator_name')
+        page_name = context.user_data.get('selected_page')
+        page_id = context.user_data.get('page_names', {}).get(page_name)
+        shift = context.user_data.get('selected_shift')
+        operation_type = context.user_data.get('operation_type')
+        display_operation_type = context.user_data.get('display_operation_type')
+        amount = float(context.user_data.get('amount', 0))
+
+        logger.info(f"Context data before creating record:")
+        logger.info(f"operator_id: {operator_id}")
+        logger.info(f"operator_name: {operator_name}")
+        logger.info(f"page_name: {page_name}")
+        logger.info(f"page_id: {page_id}")
+        logger.info(f"shift: {shift}")
+        logger.info(f"operation_type: {operation_type}")
+        logger.info(f"display_operation_type: {display_operation_type}")
+        logger.info(f"amount: {amount}")
+        logger.info(f"date: {date}")
+        
+        # Проверяем наличие всех необходимых данных
+        if not all([operator_id, operator_name, page_id, shift, operation_type, amount, date]):
+            missing_fields = []
+            if not operator_id: missing_fields.append("ID оператора")
+            if not operator_name: missing_fields.append("Имя оператора")
+            if not page_id: missing_fields.append("ID страницы")
+            if not shift: missing_fields.append("Смена")
+            if not operation_type: missing_fields.append("Тип операции")
+            if not amount: missing_fields.append("Сумма")
+            if not date: missing_fields.append("Дата")
+            
+            logger.error(f"Missing required fields: {', '.join(missing_fields)}")
+            await update.message.reply_text(
+                f"Не удалось создать запись. Отсутствуют необходимые данные: {', '.join(missing_fields)}. Начните заново.",
+                reply_markup=create_main_keyboard()
+            )
+            return MENU
+        
+        # Создаем запись в Airtable
+        record = {
+            "ID": str(operator_id),
+            "Name": operator_name,
+            "Касса": amount,
+            "Страница": [page_id],
+            "Смена": shift,
+            "Date": date,
+            "Тип": operation_type,
+            "Менеджер": [context.user_data['manager']] if context.user_data.get('manager') else None
+        }
+        
+        logger.info(f"Creating record with data: {record}")
+        
+        try:
+            # Создаем запись
+            result = cash_table.create(record)
+            logger.info(f"Record created successfully: {result}")
+            
+            # Отправляем сообщение об успехе
+            await update.message.reply_text(
+                f"✅ Запись успешно создана!\n\n"
+                f"📄 Страница: {page_name}\n"
+                f"⏰ Смена: {shift}\n"
+                f"📝 Тип: {operation_type}\n"
+                f"💵 Сумма: {amount}\n"
+                f"📅 Дата: {text}",
+                reply_markup=create_main_keyboard()
+            )
+            return MENU
+        except Exception as e:
+            logger.error(f"Error creating record in Airtable: {str(e)}")
+            await update.message.reply_text(
+                "Не удалось создать запись в базе данных. Пожалуйста, попробуйте еще раз или обратитесь к менеджеру.",
+                reply_markup=create_main_keyboard()
+            )
+            return MENU
+            
+    except Exception as e:
+        logger.error(f"Error in handle_cash_flow_date: {str(e)}")
+        await update.message.reply_text(
+            "Произошла ошибка при обработке даты. Пожалуйста, попробуйте еще раз.",
+            reply_markup=create_main_keyboard()
+        )
+        return MENU
+
+async def handle_schedule_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора даты для графика"""
+    text = update.message.text
+    
+    if text == "⬅️ Назад" or text == "🏠 В главное меню":
+        return await handle_navigation(update, context)
+    
+    try:
+        day = int(text)
+        if 1 <= day <= 31:
+            context.user_data['selected_date'] = day
+            
+            # Создаем клавиатуру с вариантами статуса и навигацией
+            keyboard = [
+                [KeyboardButton("🏖️ Выходной")],
+                [KeyboardButton("🔄 Замена")],
+                [KeyboardButton("⬅️ Назад")],
+                [KeyboardButton("🏠 В главное меню")]
+            ]
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            
+            await update.message.reply_text(
+                f"Выберите статус для {day} числа:",
+                reply_markup=reply_markup
+            )
+            return SCHEDULE_SELECT_SHIFT
+        else:
+            await update.message.reply_text(
+                "Пожалуйста, введите число от 1 до 31",
+                reply_markup=ReplyKeyboardMarkup([
+                    [KeyboardButton("⬅️ Назад")],
+                    [KeyboardButton("🏠 В главное меню")]
+                ], resize_keyboard=True)
+            )
+            return SCHEDULE_SELECT_DATE
+    except ValueError:
+        await update.message.reply_text(
+            "Пожалуйста, введите корректное число от 1 до 31",
+            reply_markup=ReplyKeyboardMarkup([
+                [KeyboardButton("⬅️ Назад")],
+                [KeyboardButton("🏠 В главное меню")]
+            ], resize_keyboard=True)
+        )
+        return SCHEDULE_SELECT_DATE
+
+async def handle_schedule_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора статуса для графика"""
+    text = update.message.text
+    
+    if text == "⬅️ Назад" or text == "🏠 В главное меню":
+        return await handle_navigation(update, context)
+    
+    text = text.replace("🏖️ ", "").replace("🔄 ", "")
+    
+    operator_id = context.user_data['operator_id']
+    day = context.user_data['selected_date']
+    
+    # Находим запись в графике для данного оператора
+    schedule_records = schedule_table.all(
+        formula=f"{{ID}}='{operator_id}'"
+    )
+    
+    if schedule_records:
+        record = schedule_records[0]
+        # Обновляем поле с номером дня
+        schedule_table.update(record['id'], {
+            str(day): text
+        })
+        
+        await update.message.reply_text(
+            f"✅ График успешно обновлен!\n📅 День {day}: установлен статус '{text}'",
+            reply_markup=create_main_keyboard()
+        )
+    else:
+        await update.message.reply_text(
+            "❌ Не удалось найти вашу запись в графике. Обратитесь к менеджеру.",
+            reply_markup=create_main_keyboard()
+        )
+    
+    return MENU
+
+async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик навигации (Назад/В главное меню)"""
+    text = update.message.text
+    
+    if text == "🏠 В главное меню":
+        await update.message.reply_text(
+            "Выберите действие:",
+            reply_markup=create_main_keyboard()
+        )
+        return MENU
+    elif text == "⬅️ Назад":
+        # Определяем текущее состояние и возвращаемся на шаг назад
+        current_state = context.user_data.get('state', MENU)
+        if current_state == CASH_FLOW_ENTER_DATE:
+            return await handle_cash_flow_type(update, context)
+        elif current_state == CASH_FLOW_ENTER_AMOUNT:
+            return await handle_cash_flow_shift(update, context)
+        elif current_state == CASH_FLOW_SELECT_TYPE:
+            return await handle_cash_flow_page(update, context)
+        elif current_state == CASH_FLOW_SELECT_SHIFT:
+            return await handle_menu(update, context)
+        elif current_state == CASH_FLOW_SELECT_PAGE:
+            return await handle_menu(update, context)
+        elif current_state == SCHEDULE_SELECT_SHIFT:
+            return await handle_schedule_date(update, context)
+        elif current_state == SCHEDULE_SELECT_DATE:
+            return await handle_menu(update, context)
+    
+    return MENU
+
+def main():
+    """Основная функция запуска бота"""
+    # Получаем токен бота из переменных окружения
+    token = os.getenv('TELEGRAM_BOT_TOKEN')
+    
+    # Создаем приложение
+    application = Application.builder().token(token).build()
+    
+    # Создаем обработчик разговора
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            CHOOSING_ACTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_action)],
-            CHOOSING_PAGE: [CallbackQueryHandler(handle_page_selection)],
-            CHOOSING_TYPE: [CallbackQueryHandler(handle_type_selection)],
-            ENTERING_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount)],
-            CHOOSING_SHIFT: [CallbackQueryHandler(handle_shift_selection)],
-            ENTERING_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_date)],
-            SCHEDULE_CHOOSING_DATE: [CallbackQueryHandler(handle_schedule_page), CallbackQueryHandler(handle_schedule_shift)],
-            SCHEDULE_CHOOSING_SHIFT: [CallbackQueryHandler(handle_schedule_day)],
+            MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu)],
+            CASH_FLOW_SELECT_PAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_page)],
+            CASH_FLOW_SELECT_SHIFT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_shift)],
+            CASH_FLOW_SELECT_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_type)],
+            CASH_FLOW_ENTER_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_amount)],
+            CASH_FLOW_ENTER_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_date)],
+            SCHEDULE_SELECT_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_schedule_date)],
+            SCHEDULE_SELECT_SHIFT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_schedule_shift)],
         },
         fallbacks=[CommandHandler('start', start)]
     )
+    
+    # Добавляем обработчик разговора в приложение
     application.add_handler(conv_handler)
-    application.add_handler(CommandHandler('help', help_command))
+    
+    # Запускаем бота
     application.run_polling()
 
 if __name__ == '__main__':
