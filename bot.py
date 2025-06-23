@@ -547,19 +547,31 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return MENU
 
-def main():
-    """Основная функция запуска бота"""
-    # Получаем токен бота из переменных окружения
-    token = os.getenv('TELEGRAM_BOT_TOKEN')
+async def main():
+    """Основная функция бота"""
+    # Загружаем токен из переменных окружения
+    load_dotenv()
+    token = os.getenv('TELEGRAM_TOKEN')
+    if not token:
+        logger.error("Не найден токен бота!")
+        return
+
+    # Инициализируем бота без использования Updater
+    application = (
+        Application.builder()
+        .token(token)
+        .concurrent_updates(True)
+        .build()
+    )
+
+    # Добавляем обработчики
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu))
     
-    # Создаем приложение
-    application = Application.builder().token(token).build()
-    
-    # Создаем обработчик разговора
+    # Добавляем обработчики состояний
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
+        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu)],
         states={
-            MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu)],
             CASH_FLOW_SELECT_PAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_page)],
             CASH_FLOW_SELECT_SHIFT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_shift)],
             CASH_FLOW_SELECT_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_type)],
@@ -568,14 +580,14 @@ def main():
             SCHEDULE_SELECT_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_schedule_date)],
             SCHEDULE_SELECT_SHIFT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_schedule_shift)],
         },
-        fallbacks=[CommandHandler('start', start)]
+        fallbacks=[],
     )
-    
-    # Добавляем обработчик разговора в приложение
     application.add_handler(conv_handler)
-    
+
     # Запускаем бота
-    application.run_polling()
+    await application.initialize()
+    await application.start()
+    await application.run_polling()
 
 if __name__ == '__main__':
-    main() 
+    asyncio.run(main()) 
