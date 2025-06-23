@@ -67,61 +67,17 @@ def create_navigation_keyboard(include_back=True, include_main_menu=True):
         keyboard.append([KeyboardButton("🏠 В главное меню")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-async def start(update: Update, context: CallbackContext):
-    """Обработчик команды /start"""
-    # Получаем информацию о пользователе
-    user_id = str(update.effective_user.id)
-    
-    try:
-        # Ищем оператора по TG ID
-        operators = operators_table.all()
-        operator = None
-        
-        for op in operators:
-            if op['fields'].get('TG ID') == user_id:
-                operator = op
-                break
-        
-        if operator:
-            logger.info(f"Found operator: {operator}")
-            # Сохраняем данные оператора
-            context.user_data['operator_id'] = operator['fields'].get('ID')
-            context.user_data['operator_name'] = operator['fields'].get('Name')
-            context.user_data['manager'] = operator['fields'].get('Менеджер', [None])[0] if operator['fields'].get('Менеджер') else None
-            
-            # Получаем страницы оператора
-            pages = {}
-            if 'Страница' in operator['fields']:
-                for page_id in operator['fields']['Страница']:
-                    try:
-                        page = cash_table.get(page_id)
-                        if page and 'Name' in page['fields']:
-                            pages[page['fields']['Name']] = page_id
-                    except Exception as e:
-                        logger.error(f"Error fetching page {page_id}: {str(e)}")
-            
-            context.user_data['page_names'] = pages
-            logger.info(f"Saved operator data: {context.user_data}")
-            
-            # Создаем основную клавиатуру
-            await update.message.reply_text(
-                "Выберите действие:",
-                reply_markup=create_main_keyboard()
-            )
-            return MENU
-        else:
-            logger.warning(f"Operator not found for TG ID: {user_id}")
-            await update.message.reply_text(
-                "Извините, но я вас не узнаю. Обратитесь к менеджеру для регистрации в системе."
-            )
-            return ConversationHandler.END
-            
-    except Exception as e:
-        logger.error(f"Error in start handler: {str(e)}")
-        await update.message.reply_text(
-            "Произошла ошибка при запуске бота. Попробуйте позже или обратитесь к менеджеру."
-        )
-        return ConversationHandler.END
+def start(update: Update, context: CallbackContext) -> int:
+    """Начало разговора"""
+    keyboard = [
+        ['Касса', 'График']
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    update.message.reply_text(
+        'Выберите действие:',
+        reply_markup=reply_markup
+    )
+    return MENU
 
 async def handle_menu(update: Update, context: CallbackContext):
     """Обработчик главного меню"""
