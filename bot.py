@@ -557,17 +557,12 @@ async def main():
         logger.error("Не найден токен бота!")
         return
 
-    # Инициализируем бота без использования Updater
-    application = (
-        Application.builder()
-        .token(token)
-        .concurrent_updates(True)
-        .build()
-    )
+    # Инициализируем бота
+    bot = Application.builder().token(token).build()
 
     # Добавляем обработчики
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu))
+    bot.add_handler(CommandHandler("start", start))
+    bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu))
     
     # Добавляем обработчики состояний
     conv_handler = ConversationHandler(
@@ -583,12 +578,15 @@ async def main():
         },
         fallbacks=[],
     )
-    application.add_handler(conv_handler)
+    bot.add_handler(conv_handler)
 
     # Запускаем бота
-    await application.initialize()
-    await application.start()
-    await application.run_polling()
+    await bot.initialize()
+    await bot.start()
+    await bot.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
-    asyncio.run(main()) 
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass 
