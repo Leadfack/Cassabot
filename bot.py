@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import sys
 from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
@@ -13,6 +14,7 @@ from telegram.ext import (
     CallbackContext,
     CallbackQueryHandler
 )
+from telegram.error import Conflict
 from pyairtable import Api, Base, Table
 
 # Настройка логирования
@@ -569,33 +571,48 @@ def help_command(update: Update, context: CallbackContext) -> None:
 """
     update.message.reply_text(help_text)
 
+def error_handler(update: Update, context: CallbackContext) -> None:
+    """Обработчик ошибок"""
+    logger.error(f'Update {update} caused error {context.error}')
+    if isinstance(context.error, Conflict):
+        logger.error('Обнаружен конфликт - бот уже запущен')
+        sys.exit(1)
+
 def main():
-    updater = Updater(os.getenv('TELEGRAM_TOKEN'))
-    dispatcher = updater.dispatcher
+    try:
+        updater = Updater(os.getenv('TELEGRAM_TOKEN'))
+        dispatcher = updater.dispatcher
 
-    # Добавляем обработчики
-    dispatcher.add_handler(CommandHandler('start', start))
-    dispatcher.add_handler(CommandHandler('help', help_command))
-    
-    # Добавляем обработчики состояний
-    conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(Filters.text & ~Filters.command, handle_menu)],
-        states={
-            CASH_FLOW_SELECT_PAGE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_page)],
-            CASH_FLOW_SELECT_SHIFT: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_shift)],
-            CASH_FLOW_SELECT_TYPE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_type)],
-            CASH_FLOW_ENTER_AMOUNT: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_amount)],
-            CASH_FLOW_ENTER_DATE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_date)],
-            SCHEDULE_SELECT_DATE: [MessageHandler(Filters.text & ~Filters.command, handle_schedule_date)],
-            SCHEDULE_SELECT_SHIFT: [MessageHandler(Filters.text & ~Filters.command, handle_schedule_shift)],
-        },
-        fallbacks=[],
-    )
-    dispatcher.add_handler(conv_handler)
+        # Добавляем обработчик ошибок
+        dispatcher.add_error_handler(error_handler)
 
-    # Запускаем бота
-    updater.start_polling()
-    updater.idle()
+        # Добавляем обработчики
+        dispatcher.add_handler(CommandHandler('start', start))
+        dispatcher.add_handler(CommandHandler('help', help_command))
+        
+        # Добавляем обработчики состояний
+        conv_handler = ConversationHandler(
+            entry_points=[MessageHandler(Filters.text & ~Filters.command, handle_menu)],
+            states={
+                CASH_FLOW_SELECT_PAGE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_page)],
+                CASH_FLOW_SELECT_SHIFT: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_shift)],
+                CASH_FLOW_SELECT_TYPE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_type)],
+                CASH_FLOW_ENTER_AMOUNT: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_amount)],
+                CASH_FLOW_ENTER_DATE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_date)],
+                SCHEDULE_SELECT_DATE: [MessageHandler(Filters.text & ~Filters.command, handle_schedule_date)],
+                SCHEDULE_SELECT_SHIFT: [MessageHandler(Filters.text & ~Filters.command, handle_schedule_shift)],
+            },
+            fallbacks=[],
+        )
+        dispatcher.add_handler(conv_handler)
+
+        # Запускаем бота
+        logger.info("Бот запущен")
+        updater.start_polling()
+        updater.idle()
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")
+        sys.exit(1)
 
 if __name__ == '__main__':
     main() 
