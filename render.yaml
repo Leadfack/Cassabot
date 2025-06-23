@@ -3,10 +3,12 @@ services:
     name: of-agencyos-bot
     env: python
     region: frankfurt
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
     startCommand: python bot.py
     autoDeploy: true
-    runtime: python3.11
+    runtime: "python:3.11"
     envVars:
       - key: TELEGRAM_TOKEN
         sync: false
