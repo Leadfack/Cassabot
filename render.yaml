@@ -1,7 +1,9 @@
 services:
-  - type: worker
-    name: agency-os-bot
+  - type: web
+    name: of-agencyos-bot
     env: docker
+    buildCommand: docker build -t of-agencyos-bot .
+    startCommand: docker run of-agencyos-bot
     envVars:
       - key: TELEGRAM_TOKEN
         sync: false
