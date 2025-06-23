@@ -5,6 +5,7 @@ services:
     region: frankfurt
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
+    autoDeploy: true
     envVars:
       - key: TELEGRAM_TOKEN
         sync: false
