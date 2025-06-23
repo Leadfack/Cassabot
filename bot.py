@@ -556,6 +556,19 @@ async def handle_navigation(update: Update, context: CallbackContext):
     
     return MENU
 
+def help_command(update: Update, context: CallbackContext) -> None:
+    """Отправляет сообщение с помощью при команде /help"""
+    help_text = """
+Доступные команды:
+/start - Начать работу с ботом
+/help - Показать это сообщение помощи
+
+Функции бота:
+1. Касса - учет движения денежных средств
+2. График - управление расписанием работы
+"""
+    update.message.reply_text(help_text)
+
 def main():
     updater = Updater(os.getenv('TELEGRAM_TOKEN'))
     dispatcher = updater.dispatcher
@@ -563,8 +576,22 @@ def main():
     # Добавляем обработчики
     dispatcher.add_handler(CommandHandler('start', start))
     dispatcher.add_handler(CommandHandler('help', help_command))
-    dispatcher.add_handler(CallbackQueryHandler(button))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    
+    # Добавляем обработчики состояний
+    conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(Filters.text & ~Filters.command, handle_menu)],
+        states={
+            CASH_FLOW_SELECT_PAGE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_page)],
+            CASH_FLOW_SELECT_SHIFT: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_shift)],
+            CASH_FLOW_SELECT_TYPE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_type)],
+            CASH_FLOW_ENTER_AMOUNT: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_amount)],
+            CASH_FLOW_ENTER_DATE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_date)],
+            SCHEDULE_SELECT_DATE: [MessageHandler(Filters.text & ~Filters.command, handle_schedule_date)],
+            SCHEDULE_SELECT_SHIFT: [MessageHandler(Filters.text & ~Filters.command, handle_schedule_shift)],
+        },
+        fallbacks=[],
+    )
+    dispatcher.add_handler(conv_handler)
 
     # Запускаем бота
     updater.start_polling()
