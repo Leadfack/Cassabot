@@ -1,10 +1,9 @@
 import os
 import logging
-import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackContext
 from pyairtable import Api, Base, Table
 
 # Настройка логирования
@@ -56,7 +55,7 @@ def create_navigation_keyboard(include_back=True, include_main_menu=True):
         keyboard.append([KeyboardButton("🏠 В главное меню")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: CallbackContext):
     """Обработчик команды /start"""
     # Получаем информацию о пользователе
     user_id = str(update.effective_user.id)
@@ -112,7 +111,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
-async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_menu(update: Update, context: CallbackContext):
     """Обработчик главного меню"""
     text = update.message.text
     logger.info(f"Menu selection: {text}")
@@ -207,7 +206,7 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return MENU
 
-async def handle_cash_flow_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_cash_flow_page(update: Update, context: CallbackContext):
     """Обработчик выбора страницы для записи кассы"""
     text = update.message.text
     
@@ -230,7 +229,7 @@ async def handle_cash_flow_page(update: Update, context: ContextTypes.DEFAULT_TY
     )
     return CASH_FLOW_SELECT_SHIFT
 
-async def handle_cash_flow_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_cash_flow_shift(update: Update, context: CallbackContext):
     """Обработчик выбора смены"""
     text = update.message.text
     
@@ -256,7 +255,7 @@ async def handle_cash_flow_shift(update: Update, context: ContextTypes.DEFAULT_T
     )
     return CASH_FLOW_SELECT_TYPE
 
-async def handle_cash_flow_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_cash_flow_type(update: Update, context: CallbackContext):
     """Обработчик выбора типа операции"""
     text = update.message.text
     
@@ -295,7 +294,7 @@ async def handle_cash_flow_type(update: Update, context: ContextTypes.DEFAULT_TY
     )
     return CASH_FLOW_ENTER_AMOUNT
 
-async def handle_cash_flow_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_cash_flow_amount(update: Update, context: CallbackContext):
     """Обработчик ввода суммы"""
     text = update.message.text
     
@@ -325,7 +324,7 @@ async def handle_cash_flow_amount(update: Update, context: ContextTypes.DEFAULT_
         )
         return CASH_FLOW_ENTER_AMOUNT
 
-async def handle_cash_flow_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_cash_flow_date(update: Update, context: CallbackContext):
     """Обработчик ввода даты"""
     text = update.message.text
     
@@ -437,7 +436,7 @@ async def handle_cash_flow_date(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return MENU
 
-async def handle_schedule_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_schedule_date(update: Update, context: CallbackContext):
     """Обработчик выбора даты для графика"""
     text = update.message.text
     
@@ -482,7 +481,7 @@ async def handle_schedule_date(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return SCHEDULE_SELECT_DATE
 
-async def handle_schedule_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_schedule_shift(update: Update, context: CallbackContext):
     """Обработчик выбора статуса для графика"""
     text = update.message.text
     
@@ -518,7 +517,7 @@ async def handle_schedule_shift(update: Update, context: ContextTypes.DEFAULT_TY
     
     return MENU
 
-async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_navigation(update: Update, context: CallbackContext):
     """Обработчик навигации (Назад/В главное меню)"""
     text = update.message.text
     
@@ -558,32 +557,31 @@ async def main():
         return
 
     # Инициализируем бота
-    bot = Application.builder().token(token).build()
+    updater = Updater(token)
 
     # Добавляем обработчики
-    bot.add_handler(CommandHandler("start", start))
-    bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu))
+    updater.dispatcher.add_handler(CommandHandler("start", start))
+    updater.dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_menu))
     
     # Добавляем обработчики состояний
     conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu)],
+        entry_points=[MessageHandler(Filters.text & ~Filters.command, handle_menu)],
         states={
-            CASH_FLOW_SELECT_PAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_page)],
-            CASH_FLOW_SELECT_SHIFT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_shift)],
-            CASH_FLOW_SELECT_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_type)],
-            CASH_FLOW_ENTER_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_amount)],
-            CASH_FLOW_ENTER_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cash_flow_date)],
-            SCHEDULE_SELECT_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_schedule_date)],
-            SCHEDULE_SELECT_SHIFT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_schedule_shift)],
+            CASH_FLOW_SELECT_PAGE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_page)],
+            CASH_FLOW_SELECT_SHIFT: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_shift)],
+            CASH_FLOW_SELECT_TYPE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_type)],
+            CASH_FLOW_ENTER_AMOUNT: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_amount)],
+            CASH_FLOW_ENTER_DATE: [MessageHandler(Filters.text & ~Filters.command, handle_cash_flow_date)],
+            SCHEDULE_SELECT_DATE: [MessageHandler(Filters.text & ~Filters.command, handle_schedule_date)],
+            SCHEDULE_SELECT_SHIFT: [MessageHandler(Filters.text & ~Filters.command, handle_schedule_shift)],
         },
         fallbacks=[],
     )
-    bot.add_handler(conv_handler)
+    updater.dispatcher.add_handler(conv_handler)
 
     # Запускаем бота
-    await bot.initialize()
-    await bot.start()
-    await bot.run_polling(allowed_updates=Update.ALL_TYPES)
+    await updater.start()
+    await updater.idle()
 
 if __name__ == '__main__':
     try:
