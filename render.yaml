@@ -2,6 +2,7 @@ services:
   - type: worker
     name: of-agencyos-bot
     env: python
+    region: frankfurt
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
