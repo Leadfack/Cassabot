@@ -1,5 +1,20 @@
 import os
 import logging
+from PIL import Image
+import io
+
+# Патч для python-telegram-bot, чтобы использовать PIL вместо imghdr
+def what(h, f):
+    try:
+        with Image.open(f) as img:
+            return img.format.lower()
+    except:
+        return None
+
+import sys
+sys.modules['imghdr'] = type(sys)('imghdr')
+sys.modules['imghdr'].what = what
+
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Updater,
