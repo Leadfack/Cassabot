@@ -9,7 +9,7 @@ services:
       pip install -r requirements.txt
     startCommand: python bot.py
     autoDeploy: true
-    runtime: "python:3.11"
+    runtime: "python:3.11.8"
     envVars:
       - key: TELEGRAM_TOKEN
         sync: false
