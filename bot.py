@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import sys
+import time
 from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
@@ -571,15 +572,25 @@ def help_command(update: Update, context: CallbackContext) -> None:
 """
     update.message.reply_text(help_text)
 
+def force_exit():
+    """Принудительное завершение процесса"""
+    logger.error('Принудительное завершение процесса')
+    os._exit(1)
+
 def error_handler(update: Update, context: CallbackContext) -> None:
     """Обработчик ошибок"""
     logger.error(f'Update {update} caused error {context.error}')
     if isinstance(context.error, Conflict):
         logger.error('Обнаружен конфликт - бот уже запущен')
-        sys.exit(1)
+        force_exit()
 
 def main():
     try:
+        # Добавляем задержку перед запуском
+        logger.info("Ожидание 10 секунд перед запуском...")
+        time.sleep(10)
+        
+        logger.info("Инициализация бота...")
         updater = Updater(os.getenv('TELEGRAM_TOKEN'))
         dispatcher = updater.dispatcher
 
@@ -612,7 +623,7 @@ def main():
         updater.idle()
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}")
-        sys.exit(1)
+        force_exit()
 
 if __name__ == '__main__':
     main() 
