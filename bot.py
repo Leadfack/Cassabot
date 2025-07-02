@@ -29,7 +29,7 @@ CASH_TABLE = "Касса"
 SCHEDULE_TABLE = "График"
 
 # Константы для смен
-SHIFTS = ["00-08", "08-16", "16-00", "00-06", "06-12", "18-00"]
+SHIFTS = ["00-08", "08-16", "16-00", "00-06", "06-12", "12-18", "18-00"]
 
 # Инициализация Airtable
 airtable = Api(AIRTABLE_API_KEY)
@@ -448,8 +448,12 @@ async def handle_schedule_date(update: Update, context: ContextTypes.DEFAULT_TYP
         if 1 <= day <= 31:
             context.user_data['selected_date'] = day
             
-            # Создаем клавиатуру с вариантами статуса и навигацией
+            # Создаем клавиатуру с вариантами смен, статуса и навигацией
             keyboard = [
+                [KeyboardButton("00-08"), KeyboardButton("08-16")],
+                [KeyboardButton("16-00"), KeyboardButton("00-06")],
+                [KeyboardButton("06-12"), KeyboardButton("12-18")],
+                [KeyboardButton("18-00")],
                 [KeyboardButton("🏖️ Выходной")],
                 [KeyboardButton("🔄 Замена")],
                 [KeyboardButton("⬅️ Назад")],
