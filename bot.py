@@ -116,6 +116,14 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     logger.info(f"Menu selection: {text}")
 
+    # Обрабатываем кнопки навигации
+    if text in ["⬅️ Назад", "🏠 В главное меню"]:
+        await update.message.reply_text(
+            "Выберите действие:",
+            reply_markup=create_main_keyboard()
+        )
+        return MENU
+
     if text == "💰 Записать кассу":
         # Получаем страницы оператора
         try:
@@ -198,10 +206,12 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
         return SCHEDULE_SELECT_DATE
-
+    
     else:
+        # Обрабатываем неизвестные команды в главном меню
+        logger.info(f"Unknown command in main menu: {text}")
         await update.message.reply_text(
-            "Выберите действие из меню:",
+            "Пожалуйста, выберите одно из доступных действий:",
             reply_markup=create_main_keyboard()
         )
         return MENU
